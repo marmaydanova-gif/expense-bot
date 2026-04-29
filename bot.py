@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS expenses(
 id INTEGER PRIMARY KEY AUTOINCREMENT,
 project TEXT,
 person TEXT,
-sum REAL
+sum REAL,
+comment TEXT
 )
 """)
 
@@ -43,7 +44,7 @@ def menu():
 # =====================
 @bot.message_handler(commands=["start"])
 def start(msg):
-    bot.send_message(msg.chat.id, "🔥 ULTRA бот активен", reply_markup=menu())
+    bot.send_message(msg.chat.id, "🔥 MAX бот активен", reply_markup=menu())
 
 # =====================
 # PROJECTS
@@ -99,6 +100,7 @@ def del_project(msg):
 @bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
 def delete_btn(call):
     pid = call.data.split("_")[1]
+
     cur.execute("DELETE FROM projects WHERE id=?", (pid,))
     conn.commit()
 
@@ -156,24 +158,30 @@ def enter_sum(call):
     project = arr[2]
 
     msg = bot.send_message(call.message.chat.id, "Введите сумму:")
-    bot.register_next_step_handler(msg, save_expense, project, person)
+    bot.register_next_step_handler(msg, enter_comment, project, person)
 
-def save_expense(msg, project, person):
+def enter_comment(msg, project, person):
     try:
         s = float(msg.text.replace(",", "."))
     except:
         bot.send_message(msg.chat.id, "Неверная сумма")
         return
 
+    x = bot.send_message(msg.chat.id, "Комментарий к расходу:")
+    bot.register_next_step_handler(x, save_expense, project, person, s)
+
+def save_expense(msg, project, person, s):
+    comment = msg.text
+
     cur.execute(
-        "INSERT INTO expenses(project,person,sum) VALUES(?,?,?)",
-        (project, person, s)
+        "INSERT INTO expenses(project,person,sum,comment) VALUES(?,?,?,?)",
+        (project, person, s, comment)
     )
     conn.commit()
 
     bot.send_message(
         msg.chat.id,
-        f"✅ Расход добавлен\nПроект: {project}\nКто: {person}\nСумма: {s}",
+        f"✅ Расход сохранён\n\n📁 {project}\n👤 {person}\n💰 {s} ₽\n📝 {comment}",
         reply_markup=menu()
     )
 
