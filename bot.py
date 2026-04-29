@@ -37,7 +37,7 @@ def menu():
     kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row("📁 Проекты", "➕ Новый проект")
     kb.row("💸 Добавить расход", "📊 Итоги")
-    kb.row("❌ Удалить проект")
+    kb.row("🗑 Удалить расход", "❌ Удалить проект")
     return kb
 
 # =====================
@@ -45,13 +45,13 @@ def menu():
 # =====================
 @bot.message_handler(commands=["start"])
 def start(msg):
-    bot.send_message(msg.chat.id, "🔥 BOT MAX активен", reply_markup=menu())
+    bot.send_message(msg.chat.id, "🔥 ULTRA MAX активен", reply_markup=menu())
 
 # =====================
 # PROJECTS
 # =====================
 @bot.message_handler(func=lambda m: m.text == "📁 Проекты")
-def show_projects(msg):
+def projects(msg):
     cur.execute("SELECT name FROM projects")
     rows = cur.fetchall()
 
@@ -101,15 +101,10 @@ def del_project(msg):
 @bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
 def delete_project(call):
     pid = call.data.split("_")[1]
-
     cur.execute("DELETE FROM projects WHERE id=?", (pid,))
     conn.commit()
 
-    bot.edit_message_text(
-        "✅ Проект удалён",
-        call.message.chat.id,
-        call.message.message_id
-    )
+    bot.edit_message_text("✅ Удалено", call.message.chat.id, call.message.message_id)
 
 # =====================
 # ADD EXPENSE
@@ -169,74 +164,84 @@ def enter_comment(msg, project, person):
         return
 
     x = bot.send_message(msg.chat.id, "Комментарий:")
-    bot.register_next_step_handler(x, ask_photo, project, person, s)
+    bot.register_next_step_handler(x, save_expense, project, person, s)
 
-def ask_photo(msg, project, person, s):
+def save_expense(msg, project, person, s):
     comment = msg.text
-
-    kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    kb.row("⏭ Пропустить")
-
-    x = bot.send_message(
-        msg.chat.id,
-        "📸 Пришли фото чека или нажми Пропустить",
-        reply_markup=kb
-    )
-
-    bot.register_next_step_handler(x, save_expense, project, person, s, comment)
-
-def save_expense(msg, project, person, s, comment):
-    photo_id = ""
-
-    if msg.content_type == "photo":
-        photo_id = msg.photo[-1].file_id
-
-    if msg.text == "⏭ Пропустить":
-        photo_id = ""
 
     cur.execute("""
         INSERT INTO expenses(project,person,sum,comment,photo)
         VALUES(?,?,?,?,?)
-    """, (project, person, s, comment, photo_id))
+    """, (project, person, s, comment, ""))
 
     conn.commit()
 
     bot.send_message(
         msg.chat.id,
-        f"✅ Расход сохранён\n\n📁 {project}\n👤 {person}\n💰 {s} ₽\n📝 {comment}",
+        f"✅ Расход добавлен\n📁 {project}\n👤 {person}\n💰 {s} ₽",
         reply_markup=menu()
     )
+
+# =====================
+# DELETE LAST EXPENSE
+# =====================
+@bot.message_handler(func=lambda m: m.text == "🗑 Удалить расход")
+def delete_last(msg):
+    cur.execute("SELECT id FROM expenses ORDER BY id DESC LIMIT 1")
+    row = cur.fetchone()
+
+    if not row:
+        bot.send_message(msg.chat.id, "Расходов нет")
+        return
+
+    cur.execute("DELETE FROM expenses WHERE id=?", (row[0],))
+    conn.commit()
+
+    bot.send_message(msg.chat.id, "🗑 Последний расход удалён")
 
 # =====================
 # TOTALS
 # =====================
 @bot.message_handler(func=lambda m: m.text == "📊 Итоги")
 def totals(msg):
-    cur.execute("SELECT person,SUM(sum) FROM expenses GROUP BY person")
+    cur.execute("SELECT project,person,SUM(sum) FROM expenses GROUP BY project,person")
     rows = cur.fetchall()
 
     if not rows:
         bot.send_message(msg.chat.id, "Расходов нет")
         return
 
-    text = "📊 Итоги:\n\n"
-    total = 0
+    data = {}
 
     for r in rows:
-        text += f"{r[0]}: {r[1]} ₽\n"
-        total += r[1]
+        project = r[0]
+        person = r[1]
+        amount = r[2]
 
-    text += f"\n💰 Общий расход: {total} ₽"
+        if project not in data:
+            data[project] = {}
+
+        data[project][person] = amount
+
+    text = "📊 Итоги по проектам:\n\n"
+
+    for project in data:
+        text += f"📁 {project}\n"
+
+        total = 0
+
+        for person in data[project]:
+            amount = data[project][person]
+            total += amount
+            text += f"   {person}: {amount} ₽\n"
+
+        text += f"   💰 Всего: {total} ₽\n\n"
 
     bot.send_message(msg.chat.id, text)
 
 # =====================
 # OTHER
 # =====================
-@bot.message_handler(content_types=['photo'])
-def photos(msg):
-    bot.send_message(msg.chat.id, "Используй кнопку 💸 Добавить расход")
-
 @bot.message_handler(func=lambda m: True)
 def other(msg):
     bot.send_message(msg.chat.id, "Жми кнопки 👇", reply_markup=menu())
