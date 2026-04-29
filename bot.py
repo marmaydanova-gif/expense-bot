@@ -1,49 +1,114 @@
 import telebot
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import os
+import sqlite3
 
 TOKEN = "8739810929:AAEDlAh79km06uSRCLX2I0W4fkQRt3aoH5A"
 bot = telebot.TeleBot(TOKEN)
 
-projects = []
+# ======================
+# DATABASE
+# ======================
+conn = sqlite3.connect("base.db", check_same_thread=False)
+cur = conn.cursor()
 
+cur.execute("""
+CREATE TABLE IF NOT EXISTS projects(
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+name TEXT
+)
+""")
+conn.commit()
+
+# ======================
+# MENU
+# ======================
 def menu():
-    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("📁 Проекты", "➕ Новый проект")
-    return markup
+    kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.row("📁 Проекты", "➕ Новый проект")
+    kb.row("❌ Удалить проект")
+    return kb
 
+# ======================
+# START
+# ======================
 @bot.message_handler(commands=["start"])
-def start(message):
-    bot.send_message(message.chat.id, "🔥 Бот работает", reply_markup=menu())
+def start(msg):
+    bot.send_message(msg.chat.id, "🔥 PRO бот активен", reply_markup=menu())
 
+# ======================
+# SHOW PROJECTS
+# ======================
 @bot.message_handler(func=lambda m: m.text == "📁 Проекты")
-def pr(message):
-    if not projects:
-        bot.send_message(message.chat.id, "Проектов нет")
-    else:
-        bot.send_message(message.chat.id, "\n".join(projects))
+def show_projects(msg):
+    cur.execute("SELECT name FROM projects")
+    rows = cur.fetchall()
 
+    if not rows:
+        bot.send_message(msg.chat.id, "📁 Проектов нет")
+        return
+
+    text = "📁 Проекты:\n\n"
+    for r in rows:
+        text += f"• {r[0]}\n"
+
+    bot.send_message(msg.chat.id, text)
+
+# ======================
+# NEW PROJECT
+# ======================
 @bot.message_handler(func=lambda m: m.text == "➕ Новый проект")
-def np(message):
-    msg = bot.send_message(message.chat.id, "Напиши название:")
-    bot.register_next_step_handler(msg, save)
+def new_project(msg):
+    x = bot.send_message(msg.chat.id, "✍️ Напиши название проекта:")
+    bot.register_next_step_handler(x, save_project)
 
-def save(message):
-    projects.append(message.text)
-    bot.send_message(message.chat.id, "✅ Добавлено", reply_markup=menu())
+def save_project(msg):
+    name = msg.text.strip()
+    cur.execute("INSERT INTO projects(name) VALUES(?)", (name,))
+    conn.commit()
 
-def run_bot():
-    bot.infinity_polling()
+    bot.send_message(msg.chat.id, f"✅ Проект добавлен:\n{name}", reply_markup=menu())
 
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
+# ======================
+# DELETE PROJECT
+# ======================
+@bot.message_handler(func=lambda m: m.text == "❌ Удалить проект")
+def del_project(msg):
+    cur.execute("SELECT id,name FROM projects")
+    rows = cur.fetchall()
 
-threading.Thread(target=run_bot).start()
+    if not rows:
+        bot.send_message(msg.chat.id, "Удалять нечего")
+        return
 
-port = int(os.environ.get("PORT", 10000))
-server = HTTPServer(("0.0.0.0", port), Handler)
-server.serve_forever()
+    kb = telebot.types.InlineKeyboardMarkup()
+
+    for r in rows:
+        kb.add(
+            telebot.types.InlineKeyboardButton(
+                text="❌ " + r[1],
+                callback_data=f"del_{r[0]}"
+            )
+        )
+
+    bot.send_message(msg.chat.id, "Выбери проект:", reply_markup=kb)
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
+def delete_btn(call):
+    pid = call.data.split("_")[1]
+
+    cur.execute("DELETE FROM projects WHERE id=?", (pid,))
+    conn.commit()
+
+    bot.edit_message_text(
+        "✅ Проект удалён",
+        call.message.chat.id,
+        call.message.message_id
+    )
+
+# ======================
+# OTHER
+# ======================
+@bot.message_handler(func=lambda m: True)
+def other(msg):
+    bot.send_message(msg.chat.id, "Жми кнопки 👇", reply_markup=menu())
+
+bot.infinity_polling()
