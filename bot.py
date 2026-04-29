@@ -23,7 +23,8 @@ id INTEGER PRIMARY KEY AUTOINCREMENT,
 project TEXT,
 person TEXT,
 sum REAL,
-comment TEXT
+comment TEXT,
+photo TEXT
 )
 """)
 
@@ -44,13 +45,13 @@ def menu():
 # =====================
 @bot.message_handler(commands=["start"])
 def start(msg):
-    bot.send_message(msg.chat.id, "🔥 MAX бот активен", reply_markup=menu())
+    bot.send_message(msg.chat.id, "🔥 BOT MAX активен", reply_markup=menu())
 
 # =====================
 # PROJECTS
 # =====================
 @bot.message_handler(func=lambda m: m.text == "📁 Проекты")
-def projects(msg):
+def show_projects(msg):
     cur.execute("SELECT name FROM projects")
     rows = cur.fetchall()
 
@@ -95,17 +96,17 @@ def del_project(msg):
             )
         )
 
-    bot.send_message(msg.chat.id, "Выбери:", reply_markup=kb)
+    bot.send_message(msg.chat.id, "Выбери проект:", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
-def delete_btn(call):
+def delete_project(call):
     pid = call.data.split("_")[1]
 
     cur.execute("DELETE FROM projects WHERE id=?", (pid,))
     conn.commit()
 
     bot.edit_message_text(
-        "Удалено",
+        "✅ Проект удалён",
         call.message.chat.id,
         call.message.message_id
     )
@@ -167,16 +168,37 @@ def enter_comment(msg, project, person):
         bot.send_message(msg.chat.id, "Неверная сумма")
         return
 
-    x = bot.send_message(msg.chat.id, "Комментарий к расходу:")
-    bot.register_next_step_handler(x, save_expense, project, person, s)
+    x = bot.send_message(msg.chat.id, "Комментарий:")
+    bot.register_next_step_handler(x, ask_photo, project, person, s)
 
-def save_expense(msg, project, person, s):
+def ask_photo(msg, project, person, s):
     comment = msg.text
 
-    cur.execute(
-        "INSERT INTO expenses(project,person,sum,comment) VALUES(?,?,?,?)",
-        (project, person, s, comment)
+    kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    kb.row("⏭ Пропустить")
+
+    x = bot.send_message(
+        msg.chat.id,
+        "📸 Пришли фото чека или нажми Пропустить",
+        reply_markup=kb
     )
+
+    bot.register_next_step_handler(x, save_expense, project, person, s, comment)
+
+def save_expense(msg, project, person, s, comment):
+    photo_id = ""
+
+    if msg.content_type == "photo":
+        photo_id = msg.photo[-1].file_id
+
+    if msg.text == "⏭ Пропустить":
+        photo_id = ""
+
+    cur.execute("""
+        INSERT INTO expenses(project,person,sum,comment,photo)
+        VALUES(?,?,?,?,?)
+    """, (project, person, s, comment, photo_id))
+
     conn.commit()
 
     bot.send_message(
@@ -211,6 +233,10 @@ def totals(msg):
 # =====================
 # OTHER
 # =====================
+@bot.message_handler(content_types=['photo'])
+def photos(msg):
+    bot.send_message(msg.chat.id, "Используй кнопку 💸 Добавить расход")
+
 @bot.message_handler(func=lambda m: True)
 def other(msg):
     bot.send_message(msg.chat.id, "Жми кнопки 👇", reply_markup=menu())
