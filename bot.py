@@ -1,12 +1,13 @@
 import telebot
 import sqlite3
+from datetime import datetime
 
 TOKEN = "8739810929:AAEDlAh79km06uSRCLX2I0W4fkQRt3aoH5A"
 bot = telebot.TeleBot(TOKEN)
 
-# =====================
+# ======================
 # DB
-# =====================
+# ======================
 conn = sqlite3.connect("base.db", check_same_thread=False)
 cur = conn.cursor()
 
@@ -24,15 +25,15 @@ project TEXT,
 person TEXT,
 sum REAL,
 comment TEXT,
-photo TEXT
+created_at TEXT
 )
 """)
 
 conn.commit()
 
-# =====================
+# ======================
 # MENU
-# =====================
+# ======================
 def menu():
     kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row("📁 Проекты", "➕ Новый проект")
@@ -40,16 +41,16 @@ def menu():
     kb.row("🗑 Удалить расход", "❌ Удалить проект")
     return kb
 
-# =====================
+# ======================
 # START
-# =====================
+# ======================
 @bot.message_handler(commands=["start"])
 def start(msg):
-    bot.send_message(msg.chat.id, "🔥 ULTRA MAX активен", reply_markup=menu())
+    bot.send_message(msg.chat.id, "🔥 BOT ACTIVE", reply_markup=menu())
 
-# =====================
+# ======================
 # PROJECTS
-# =====================
+# ======================
 @bot.message_handler(func=lambda m: m.text == "📁 Проекты")
 def projects(msg):
     cur.execute("SELECT name FROM projects")
@@ -65,9 +66,9 @@ def projects(msg):
 
     bot.send_message(msg.chat.id, text)
 
-# =====================
+# ======================
 # NEW PROJECT
-# =====================
+# ======================
 @bot.message_handler(func=lambda m: m.text == "➕ Новый проект")
 def new_project(msg):
     x = bot.send_message(msg.chat.id, "Название проекта:")
@@ -78,9 +79,9 @@ def save_project(msg):
     conn.commit()
     bot.send_message(msg.chat.id, "✅ Проект добавлен", reply_markup=menu())
 
-# =====================
+# ======================
 # DELETE PROJECT
-# =====================
+# ======================
 @bot.message_handler(func=lambda m: m.text == "❌ Удалить проект")
 def del_project(msg):
     cur.execute("SELECT id,name FROM projects")
@@ -98,17 +99,9 @@ def del_project(msg):
 
     bot.send_message(msg.chat.id, "Выбери проект:", reply_markup=kb)
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("del_"))
-def delete_project(call):
-    pid = call.data.split("_")[1]
-    cur.execute("DELETE FROM projects WHERE id=?", (pid,))
-    conn.commit()
-
-    bot.edit_message_text("✅ Удалено", call.message.chat.id, call.message.message_id)
-
-# =====================
+# ======================
 # ADD EXPENSE
-# =====================
+# ======================
 @bot.message_handler(func=lambda m: m.text == "💸 Добавить расход")
 def add_expense(msg):
     cur.execute("SELECT name FROM projects")
@@ -130,32 +123,54 @@ def add_expense(msg):
 
     bot.send_message(msg.chat.id, "Выбери проект:", reply_markup=kb)
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("exp_"))
-def choose_person(call):
-    project = call.data.replace("exp_", "")
+# ======================
+# CALLBACKS
+# ======================
+@bot.callback_query_handler(func=lambda c: True)
+def callbacks(call):
 
-    kb = telebot.types.InlineKeyboardMarkup()
-    kb.row(
-        telebot.types.InlineKeyboardButton("👨 Влад", callback_data="man_Vlad_" + project),
-        telebot.types.InlineKeyboardButton("👨 Никита", callback_data="man_Nikita_" + project)
-    )
+    if call.data.startswith("del_"):
+        pid = call.data.split("_")[1]
 
-    bot.edit_message_text(
-        "Кто платил?",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=kb
-    )
+        cur.execute("DELETE FROM projects WHERE id=?", (pid,))
+        conn.commit()
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("man_"))
-def enter_sum(call):
-    arr = call.data.split("_")
-    person = arr[1]
-    project = arr[2]
+        bot.edit_message_text(
+            "✅ Проект удалён",
+            call.message.chat.id,
+            call.message.message_id
+        )
+        return
 
-    msg = bot.send_message(call.message.chat.id, "Введите сумму:")
-    bot.register_next_step_handler(msg, enter_comment, project, person)
+    if call.data.startswith("exp_"):
+        project = call.data.replace("exp_", "")
 
+        kb = telebot.types.InlineKeyboardMarkup()
+        kb.row(
+            telebot.types.InlineKeyboardButton("👨 Влад", callback_data="man_Vlad_" + project),
+            telebot.types.InlineKeyboardButton("👨 Никита", callback_data="man_Nikita_" + project)
+        )
+
+        bot.edit_message_text(
+            "Кто платил?",
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=kb
+        )
+        return
+
+    if call.data.startswith("man_"):
+        arr = call.data.split("_")
+        person = arr[1]
+        project = arr[2]
+
+        x = bot.send_message(call.message.chat.id, "Введите сумму:")
+        bot.register_next_step_handler(x, enter_comment, project, person)
+        return
+
+# ======================
+# STEPS
+# ======================
 def enter_comment(msg, project, person):
     try:
         s = float(msg.text.replace(",", "."))
@@ -168,23 +183,24 @@ def enter_comment(msg, project, person):
 
 def save_expense(msg, project, person, s):
     comment = msg.text
+    dt = datetime.now().strftime("%d.%m.%Y %H:%M")
 
     cur.execute("""
-        INSERT INTO expenses(project,person,sum,comment,photo)
+        INSERT INTO expenses(project,person,sum,comment,created_at)
         VALUES(?,?,?,?,?)
-    """, (project, person, s, comment, ""))
+    """, (project, person, s, comment, dt))
 
     conn.commit()
 
     bot.send_message(
         msg.chat.id,
-        f"✅ Расход добавлен\n📁 {project}\n👤 {person}\n💰 {s} ₽",
+        f"✅ Расход сохранён\n\n📅 {dt}\n📁 {project}\n👤 {person}\n💰 {s} ₽\n📝 {comment}",
         reply_markup=menu()
     )
 
-# =====================
+# ======================
 # DELETE LAST EXPENSE
-# =====================
+# ======================
 @bot.message_handler(func=lambda m: m.text == "🗑 Удалить расход")
 def delete_last(msg):
     cur.execute("SELECT id FROM expenses ORDER BY id DESC LIMIT 1")
@@ -199,12 +215,17 @@ def delete_last(msg):
 
     bot.send_message(msg.chat.id, "🗑 Последний расход удалён")
 
-# =====================
+# ======================
 # TOTALS
-# =====================
+# ======================
 @bot.message_handler(func=lambda m: m.text == "📊 Итоги")
 def totals(msg):
-    cur.execute("SELECT project,person,SUM(sum) FROM expenses GROUP BY project,person")
+    cur.execute("""
+        SELECT project,person,SUM(sum)
+        FROM expenses
+        GROUP BY project,person
+    """)
+
     rows = cur.fetchall()
 
     if not rows:
@@ -227,7 +248,6 @@ def totals(msg):
 
     for project in data:
         text += f"📁 {project}\n"
-
         total = 0
 
         for person in data[project]:
@@ -239,9 +259,9 @@ def totals(msg):
 
     bot.send_message(msg.chat.id, text)
 
-# =====================
+# ======================
 # OTHER
-# =====================
+# ======================
 @bot.message_handler(func=lambda m: True)
 def other(msg):
     bot.send_message(msg.chat.id, "Жми кнопки 👇", reply_markup=menu())
